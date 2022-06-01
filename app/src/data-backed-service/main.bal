@@ -1,6 +1,8 @@
 import ballerina/time;
 import ballerinax/mysql;
 import ballerina/sql;
+import ballerina/http;
+import ballerinax/mysql.driver as _;
 
 public type Employee record {|
     int employee_id?;
@@ -82,4 +84,28 @@ isolated function removeEmployee(int id) returns int|error {
     } else {
         return error("Unable to obtain the affected row count");
     }
+}
+
+service /employees on new http:Listener(8080) {
+
+    isolated resource function post .(@http:Payload Employee emp) returns int|error? {
+        return addEmployee(emp);
+    }
+    
+    isolated resource function get [int id]() returns Employee|error? {
+        return getEmployee(id);
+    }
+    
+    isolated resource function get .() returns Employee[]|error? {
+        return getAllEmployees();
+    }
+    
+    isolated resource function put .(@http:Payload Employee emp) returns int|error? {
+        return updateEmployee(emp);
+    }
+    
+    isolated resource function delete [int id]() returns int|error? {
+        return removeEmployee(id);       
+    }
+
 }
