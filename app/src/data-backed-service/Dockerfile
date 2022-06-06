@@ -1,5 +1,5 @@
-FROM ballerina/ballerina:2201.0.0
+FROM ballerina/ballerina:2201.1.0
 COPY main.bal .
 COPY Ballerina.toml .
-EXPOSE 8080
+EXPOSE 8083
 CMD bal run  
