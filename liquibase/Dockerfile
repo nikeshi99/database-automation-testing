@@ -1,57 +1,34 @@
-FROM openjdk:11-jre-slim-buster
+FROM docker:19.03.1
 
-# Install GNUPG for package vefification and WGET for file download
-RUN apt-get update \
-    && apt-get -yqq install krb5-user libpam-krb5 \
-    && apt-get -y install gnupg wget unzip \
-    && rm -rf /var/lib/apt/lists/*
+# Install Python3.7, pip3, jq, awscli
+RUN apk add --no-cache python3 py3-pip jq
+RUN pip3 install --upgrade pip
+RUN pip3 install awscli
+RUN rm -rf /var/cache/apk/*
 
-# Add the liquibase user and step in the directory
-RUN addgroup --gid 1001 liquibase
-RUN adduser --disabled-password --uid 1001 --ingroup liquibase liquibase
+# Check version
+RUN python3 --version
+RUN pip3 --version
+RUN aws --version
 
-# Make /liquibase directory and change owner to liquibase
-RUN mkdir /liquibase && chown liquibase /liquibase
-WORKDIR /liquibase
+# Install Java
+RUN apk --no-cache add openjdk11 --repository=http://dl-cdn.alpinelinux.org/alpi                                                                             ne/edge/community
+RUN apk update
 
-#Symbolic link will be broken until later
-RUN ln -s /liquibase/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh \
-  && ln -s /liquibase/docker-entrypoint.sh /docker-entrypoint.sh \
-  && ln -s /liquibase/liquibase /usr/local/bin/liquibase \
-  && ln -s /liquibase/bin/lpm /usr/local/bin/lpm
+# Check version
+RUN java --version
 
-# Change to the liquibase user
-USER liquibase
+# Download Liquibase and Postgresql Driver
+RUN INIT_PATH=`pwd`
+RUN apk add bash
+RUN mkdir /liquibase
+RUN mkdir /Downloads
+RUN cd /Downloads
+RUN wget "https://github.com/liquibase/liquibase/releases/download/liquibase-par                                                                             ent-3.7.0/liquibase-3.7.0-bin.zip"
+RUN wget "https://repo1.maven.org/maven2/org/postgresql/postgresql/42.2.8/postgr                                                                             esql-42.2.8.jar"
+RUN unzip liquibase-3.7.0-bin.zip -d /liquibase -q
+RUN mv postgresql-42.2.8.jar /liquibase/lib/
+RUN export PATH=$PATH:/liquibase
 
-# Latest Liquibase Release Version
-ARG LIQUIBASE_VERSION=4.11.0
-ARG LPM_VERSION=0.1.3
-
-# Download, verify, extract
-ARG LB_SHA256=5ba5d7c155e9d6b3dace1a5290abc3adba26ea2199f54aae82f98507845b1b1b
-RUN set -x \
-  && wget -O liquibase-${LIQUIBASE_VERSION}.tar.gz "https://github.com/liquibase/liquibase/releases/download/v${LIQUIBASE_VERSION}/liquibase-${LIQUIBASE_VERSION}.tar.gz" \
-  && echo "$LB_SHA256  liquibase-${LIQUIBASE_VERSION}.tar.gz" | sha256sum -c - \
-  && tar -xzf liquibase-${LIQUIBASE_VERSION}.tar.gz \
-  && rm liquibase-${LIQUIBASE_VERSION}.tar.gz
-
-# Download and Install lpm \
-RUN mkdir /liquibase/bin
-RUN wget -q -O lpm.zip "https://github.com/liquibase/liquibase-package-manager/releases/download/v${LPM_VERSION}/lpm-${LPM_VERSION}-linux.zip"
-RUN unzip lpm.zip -d bin/
-RUN rm lpm.zip
-RUN export LIQUIBASE_HOME=/liquibase
-
-# Install Drivers
-RUN lpm update
-RUN lpm add snowflake liquibase-snowflake --global
-RUN ls -alh /liquibase/lib
-
-COPY --chown=liquibase:liquibase docker-entrypoint.sh /liquibase/
-COPY --chown=liquibase:liquibase liquibase.docker.properties /liquibase/
-
-VOLUME /liquibase/classpath
-VOLUME /liquibase/changelog
-
-ENTRYPOINT ["/liquibase/docker-entrypoint.sh"]
-CMD ["--help"]
+# Command to run within the container
+CMD systemctl start docker
