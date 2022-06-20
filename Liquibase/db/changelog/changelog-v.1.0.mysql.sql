@@ -9,3 +9,4 @@ CREATE TABLE DBdev.clients (
 	hire_date   DATE NOT NULL,
 	job_title   VARCHAR(255) NOT NULL
 );
+-- rollback drop table DBdev.clients;
