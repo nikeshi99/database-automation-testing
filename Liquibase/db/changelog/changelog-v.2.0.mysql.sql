@@ -8,3 +8,4 @@ CREATE TABLE users (
 	phone       VARCHAR(50) NOT NULL ,
 	job_title   VARCHAR(255) NOT NULL
 );
+-- rollback drop table DBdev.users;
