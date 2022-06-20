@@ -1,5 +1,5 @@
 -- liquibase formatted sql
--- changeset nikeshi:1
+-- changeset nikeshi:1 labels:v.1.0
 CREATE TABLE DBdev.Employees (
 	employee_id INTEGER AUTO_INCREMENT PRIMARY KEY,
 	first_name  VARCHAR(255) NOT NULL,
