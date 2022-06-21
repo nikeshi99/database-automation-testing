@@ -9,3 +9,8 @@ ADD COLUMN mobile VARCHAR(15) AFTER phone;
 ALTER TABLE Employees
 ADD COLUMN address VARCHAR(15) AFTER mobile;
 --rollback drop column address;
+
+-- changeset nikeshi:5
+ALTER TABLE clients
+ADD COLUMN mobile VARCHAR(15) AFTER phone;
+--rollback drop column mobile;
