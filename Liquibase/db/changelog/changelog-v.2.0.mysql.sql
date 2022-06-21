@@ -1,5 +1,5 @@
 -- liquibase formatted sql
--- changeset nikeshi:1 labels:v.1.0
+-- changeset nikeshi:1 
 CREATE TABLE DBdev.clients (
 	employee_id INTEGER AUTO_INCREMENT PRIMARY KEY,
 	first_name  VARCHAR(255) NOT NULL,
@@ -9,4 +9,4 @@ CREATE TABLE DBdev.clients (
 	hire_date   DATE NOT NULL,
 	job_title   VARCHAR(255) NOT NULL
 );
--- rollback drop table DBdev.clients;
+--rollback drop table clients;
