@@ -3,14 +3,14 @@
 ALTER TABLE Employees
 ADD COLUMN mobile VARCHAR(15) AFTER phone;
 
---rollback drop column mobile;
+--rollback ALTER TABLE Employees drop column mobile;
 
 -- changeset nikeshi:4 
 ALTER TABLE Employees
 ADD COLUMN address VARCHAR(15) AFTER mobile;
---rollback drop column address;
+--rollback ALTER TABLE Employees drop column address;
 
 -- changeset nikeshi:5
 ALTER TABLE clients
 ADD COLUMN mobile VARCHAR(15) AFTER phone;
---rollback drop column mobile;
+--rollback ALTER TABLE clients drop column mobile;
