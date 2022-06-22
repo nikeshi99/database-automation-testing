@@ -19,3 +19,8 @@ ADD COLUMN mobile VARCHAR(15) AFTER phone;
 ALTER TABLE users
 ADD COLUMN mobile VARCHAR(15) AFTER phone;
 --rollback ALTER TABLE users drop column mobile;
+
+-- changeset nikeshi:7
+ALTER TABLE users
+ADD COLUMN address VARCHAR(15) AFTER mobile;
+--rollback ALTER TABLE ussers drop column address;
