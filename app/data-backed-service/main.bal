@@ -16,7 +16,7 @@ public type Employee record {|
 |};
 
 final mysql:Client dbClient = check new(
-    host="35.244.39.57", user="nikeshi", password="Wso2@123", port=3306, database="DBdev"
+    host="0.tcp.ap.ngrok.io", user="root", password="Nikeshi@12345", port=15512, database="DBdev"
 );
 isolated function addEmployee(Employee emp) returns int|error {
     sql:ExecutionResult result = check dbClient->execute(`
