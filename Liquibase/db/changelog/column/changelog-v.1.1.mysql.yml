@@ -4,7 +4,7 @@ databaseChangeLog:
       author:  nikeshi  
       changes:  
         -  createTable:  
-#            tableName:  person  
+            tableName:  person  
             columns:  
               -  column:  
                   name:  id  
