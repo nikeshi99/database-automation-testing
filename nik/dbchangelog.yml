@@ -1,0 +1,30 @@
+databaseChangeLog:
+- changeSet:
+    id: 1659680803220-1
+    author: nikeshi (generated)
+    changes:
+    - createTable:
+        columns:
+        - column:
+            constraints:
+              nullable: false
+              primaryKey: true
+            name: title
+            type: VARCHAR(50)
+        - column:
+            constraints:
+              nullable: false
+            name: genre
+            type: VARCHAR(30)
+        - column:
+            constraints:
+              nullable: false
+            name: director
+            type: VARCHAR(60)
+        - column:
+            constraints:
+              nullable: false
+            name: release_year
+            type: INT
+        tableName: movies
+
