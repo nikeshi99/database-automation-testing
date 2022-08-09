@@ -1,0 +1,7 @@
+databaseChangeLog:  
+-  changeSet:  
+    id:  2  
+    author:  nikeshi@wso2.com  
+    changes:  
+    - dropTable:  
+        tableName:  person 
