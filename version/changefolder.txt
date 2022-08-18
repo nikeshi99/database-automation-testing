@@ -1,1 +1,1 @@
-logs/db3 logs/db2 
+db3 
