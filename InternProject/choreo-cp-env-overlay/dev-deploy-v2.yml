@@ -1,0 +1,445 @@
+resources:
+  repositories:
+    - repository: BASE_REPOSITORY
+      type: github
+      name: wso2-enterprise/choreo-control-plane
+      ref: refs/heads/main-ci
+      endpoint: wso2-enterprise
+    - repository: PDP_BASE_REPOSITORY
+      type: github
+      name: wso2-enterprise/choreo-privatedp-central-manifests
+      ref: refs/heads/main
+      endpoint: wso2-enterprise
+    - repository: TEMPLATE_REPOSITORY
+      type: github
+      name: wso2-enterprise/choreo-common-pipeline-templates
+      ref: refs/heads/main
+      endpoint: wso2-enterprise
+  containers:
+    - container: Liquibase
+      image: choreoipaas/liquibase:4.11.0-dfbe56c9dc39071e72ca73c2f60c79e9b9f38ca0
+      endpoint: 'wso2choreo-control-plane-acr'
+
+trigger:
+  batch: true
+  branches:
+    include:
+      - dev-ci
+  paths:
+    include:
+      - azure-resources/dev
+      - kustomize/dev-control-plane
+      - kustomize/dev-dataplane
+      - kustomize/dev-dataplane-common
+      - kustomize/dev-dataplane-e2
+      - kustomize/dev-routing
+      - kustomize/dev-workspace
+      - kustomize/basev2.version
+      - .azure/dev-deploy-v2.yml
+
+pr: none
+
+pool: choreo-dev-scale-set-agents
+
+variables:
+  - group: choreo-ai-multivariate-anomaly-detector
+  - group: dev-deployment
+  - name: clusterState
+    value: $[variables.cluster_state]
+  - group: dev-database
+  - name: ENVIRONMENT
+    value: dev
+  - name: NON_AKS_AZURE_SUBSCRIPTION  # This is a service principal used by the azureSubscription field in AzureCLI@2 tasks
+    value: choreo-dev-non-aks-rg
+  - name: OVERLAY_WORKING_DIRECTORY
+    value: choreo-cp-env-overlay/kustomize
+
+stages:
+  - stage: UpdatingDatabase
+    displayName: Updating database
+    jobs: 
+    - job: ApplyChanges
+      container: Liquibase
+      displayName: Applying database changes in choreo_testbase_db
+      steps:  
+      - checkout: self
+      - checkout: BASE_REPOSITORY
+      - template: update-database-template.yaml@TEMPLATE_REPOSITORY
+        parameters:
+          DB_URL: 'jdbc:sqlserver://$(DB_URL):1433;database=choreo_testbase_db;'
+          DB_USERNAME: $(DB_USERNAME)
+          DB_PASSWORD: $(DB_PASSWORD)
+          CHANGELOGFILE: liquibase/db/master-choreo_testbase_db.mysql.yml
+          LIQUIBASE_DRIVER: ${LIQUIBASE_DRIVER}
+          LIQUIBASE_CLASSPATH: ${LIQUIBASE_CLASSPATH}
+
+  - stage: ControlPlaneClusterDeployment
+    dependsOn: UpdatingDatabase
+    displayName: 'Deploying to CP Cluster'
+    jobs:
+      - deployment: deployment
+        displayName: Deployment
+        environment: choreo-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: BASE_REPOSITORY
+                - template: deploy-to-cluster.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    KUSTOMIZE_BASE_DIR: 'base-ci'
+                    KUSTOMIZE_OVERLAY_DIR: 'dev-control-plane'
+                    OVERLAY_WORKING_DIR: $(OVERLAY_WORKING_DIRECTORY)
+                    AZURE_RESOURCE_GROUP: 'choreo-dev-aks-rg'
+                    CLUSTER_NAME: 'choreo-dev-controlplane-aks-cluster'
+                    APPLICATION_NAME: 'choreo-dev-replica'
+                    BASE_VERSION_FILE: 'basev2.version'
+                    DISPLAY_NAME: 'Deploy to Controlplane cluster'
+                    ACR_SERVICE_CONNECTION: 'choreo-util-acr'
+      - job: sendAlerts
+        displayName: Send Alerts
+        dependsOn: deployment
+        condition: failed()
+        steps:
+          - template: notify-google-chat.yaml@TEMPLATE_REPOSITORY
+            parameters:
+              WEBHOOK_URL: 'https://chat.googleapis.com/v1/spaces/AAAACm3kzqw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ZK591oyEPjkaNPWT_To1tA1JfXcKTr1OGzJX2vhI0Ro%3D'
+              TITLE: 'Failed: Dev-ControlPlane V2 Deployment'
+              IMAGE_URL: 'https://img.icons8.com/fluency/48/000000/cancel.png'
+              TOP_LABEL: 'Build Number'
+              CONTENT: $(Build.BuildNumber)
+  - stage: DataPlaneE1ClusterDeployment
+    dependsOn: UpdatingDatabase
+    displayName: 'Deploying to Dataplane E1 Cluster'
+    jobs:
+      - deployment: deployment
+        displayName: Deployment
+        environment: choreo-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: BASE_REPOSITORY
+                - template: deploy-to-cluster.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    KUSTOMIZE_BASE_DIR: 'dataplane-ci'
+                    KUSTOMIZE_OVERLAY_DIR: 'dev-dataplane'
+                    AZURE_RESOURCE_GROUP: 'choreo-dev-aks-rg'
+                    CLUSTER_NAME: 'choreo-dev-dataplane-aks-cluster'
+                    APPLICATION_NAME: 'choreo-dev-replica'
+                    OVERLAY_WORKING_DIR: $(OVERLAY_WORKING_DIRECTORY)
+                    BASE_VERSION_FILE: 'basev2.version'
+                    DISPLAY_NAME: 'Deploy to DataplaneE1 cluster'
+                    ACR_SERVICE_CONNECTION: 'choreo-util-acr'
+      - job: sendAlerts
+        displayName: Send Alerts
+        dependsOn: deployment
+        condition: failed()
+        steps:
+          - template: notify-google-chat.yaml@TEMPLATE_REPOSITORY
+            parameters:
+              WEBHOOK_URL: 'https://chat.googleapis.com/v1/spaces/AAAACm3kzqw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ZK591oyEPjkaNPWT_To1tA1JfXcKTr1OGzJX2vhI0Ro%3D'
+              TITLE: 'Failed: Dev-Dataplane E1 Deployment'
+              IMAGE_URL: 'https://img.icons8.com/fluency/48/000000/cancel.png'
+              TOP_LABEL: 'Build Number'
+              CONTENT: $(Build.BuildNumber)
+  - stage: DataPlaneE2ClusterDeployment
+    dependsOn: UpdatingDatabase
+    displayName: 'Deploying to Dataplane E2 Cluster'
+    jobs:
+      - deployment: deployment
+        displayName: Deployment
+        environment: choreo-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: BASE_REPOSITORY
+                - template: deploy-to-cluster.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    KUSTOMIZE_BASE_DIR: 'dataplane-ci'
+                    KUSTOMIZE_OVERLAY_DIR: 'dev-dataplane-e2'
+                    AZURE_RESOURCE_GROUP: 'choreo-dev-aks-rg'
+                    CLUSTER_NAME: 'choreo-dev-dataplane-e2-aks-cluster'
+                    APPLICATION_NAME: 'choreo-dev-replica'
+                    OVERLAY_WORKING_DIR: $(OVERLAY_WORKING_DIRECTORY)
+                    BASE_VERSION_FILE: 'basev2.version'
+                    DISPLAY_NAME: 'Deploy to DataplaneE2 cluster'
+                    ACR_SERVICE_CONNECTION: 'choreo-util-acr'
+      - job: sendAlerts
+        displayName: Send Alerts
+        dependsOn: deployment
+        condition: failed()
+        steps:
+          - template: notify-google-chat.yaml@TEMPLATE_REPOSITORY
+            parameters:
+              WEBHOOK_URL: 'https://chat.googleapis.com/v1/spaces/AAAACm3kzqw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ZK591oyEPjkaNPWT_To1tA1JfXcKTr1OGzJX2vhI0Ro%3D'
+              TITLE: 'Failed: Dev-Dataplane E2 Deployment'
+              IMAGE_URL: 'https://img.icons8.com/fluency/48/000000/cancel.png'
+              TOP_LABEL: 'Build Number'
+              CONTENT: $(Build.BuildNumber)
+  - stage: PrivateDataPlaneDeployment
+    dependsOn: UpdatingDatabase
+    displayName: 'Deploying to Private Dataplanes'
+    jobs:
+      - deployment: userDev
+        displayName: 'Deploying to UserDev'
+        environment: choreo-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: PDP_BASE_REPOSITORY
+                - checkout: BASE_REPOSITORY
+                - script: |
+                    baseTag=$(cat ../choreo-cp-env-overlay/kustomize/privatedpbase.version)
+                    git checkout tags/$baseTag
+                  workingDirectory: choreo-privatedp-central-manifests
+                  displayName: 'Checking out current base version'
+                - template: deploy-to-cluster.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    BASE_WORKING_DIR: 'choreo-privatedp-central-manifests'
+                    KUSTOMIZE_BASE_DIR: ""
+                    KUSTOMIZE_OVERLAY_DIR: 'dev-pvt-dataplane'
+                    AZURE_RESOURCE_GROUP: 'choreo-pvtdev-dataplane-dev-aks-rg'
+                    CLUSTER_NAME: 'choreo-pvtdev-dataplane-dev'
+                    APPLICATION_NAME: 'dev-choreo-pvtdp-dv'
+                    OVERLAY_WORKING_DIR: $(OVERLAY_WORKING_DIRECTORY)
+                    BASE_VERSION_FILE: 'privatedpbase.version'
+                    DISPLAY_NAME: 'Deploy to Private Dataplane Dev cluster'
+                    ACR_SERVICE_CONNECTION: 'choreo-util-acr'
+                    SHOW_COMPONENT_VERSIONS_STEPS:
+                      - script: |
+                          cat kustomization.yaml
+                          printf "\n"
+                          cat shared-components-ci/choreo-connect-partitions/kustomization.yaml
+                        displayName: 'Display Component Versions'
+                        workingDirectory: choreo-privatedp-central-manifests
+      - deployment: userProd
+        displayName: 'Deploying to UserProd'
+        environment: choreo-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: PDP_BASE_REPOSITORY
+                - checkout: BASE_REPOSITORY
+                - script: |
+                    baseTag=$(cat ../choreo-cp-env-overlay/kustomize/privatedpbase.version)
+                    git checkout tags/$baseTag
+                  workingDirectory: choreo-privatedp-central-manifests
+                  displayName: 'Checking out current base version'
+                - template: deploy-to-cluster.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    BASE_WORKING_DIR: 'choreo-privatedp-central-manifests'
+                    KUSTOMIZE_BASE_DIR: ""
+                    KUSTOMIZE_OVERLAY_DIR: 'prod-pvt-dataplane'
+                    AZURE_RESOURCE_GROUP: 'choreo-pvtdev-dataplane-prod-aks-rg'
+                    CLUSTER_NAME: 'choreo-pvtdev-dataplane-prod'
+                    APPLICATION_NAME: 'dev-choreo-pvtdp-prod'
+                    OVERLAY_WORKING_DIR: $(OVERLAY_WORKING_DIRECTORY)
+                    BASE_VERSION_FILE: 'privatedpbase.version'
+                    DISPLAY_NAME: 'Deploy to Private Dataplane Dev cluster'
+                    ACR_SERVICE_CONNECTION: 'choreo-util-acr'
+                    SHOW_COMPONENT_VERSIONS_STEPS:
+                      - script: |
+                          cat kustomization.yaml
+                          printf "\n"
+                          cat shared-components-ci/choreo-connect-partitions/kustomization.yaml
+                        displayName: 'Display Component Versions'
+                        workingDirectory: choreo-privatedp-central-manifests
+      - job: sendAlerts
+        displayName: Send Alerts
+        dependsOn:
+        - userDev
+        - userProd
+        condition: failed()
+        steps:
+          - template: notify-google-chat.yaml@TEMPLATE_REPOSITORY
+            parameters:
+              WEBHOOK_URL: 'https://chat.googleapis.com/v1/spaces/AAAACm3kzqw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ZK591oyEPjkaNPWT_To1tA1JfXcKTr1OGzJX2vhI0Ro%3D'
+              TITLE: 'Failed: Dev-Private Dataplane Deployment'
+              IMAGE_URL: 'https://img.icons8.com/fluency/48/000000/cancel.png'
+              TOP_LABEL: 'Build Number'
+              CONTENT: $(Build.BuildNumber)
+  - stage: RoutingClusterDeployment
+    dependsOn: UpdatingDatabase
+    displayName: 'Deploying to Routing Cluster'
+    jobs:
+      - deployment: deployment
+        displayName: Deployment
+        environment: choreo-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: BASE_REPOSITORY
+                - template: deploy-to-cluster.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    KUSTOMIZE_BASE_DIR: 'routing-ci'
+                    KUSTOMIZE_OVERLAY_DIR: 'dev-routing'
+                    AZURE_RESOURCE_GROUP: 'choreo-dev-aks-rg'
+                    CLUSTER_NAME: 'choreo-dev-routing-aks-cluster'
+                    APPLICATION_NAME: 'choreo-dev-replica'
+                    OVERLAY_WORKING_DIR: $(OVERLAY_WORKING_DIRECTORY)
+                    BASE_VERSION_FILE: 'basev2.version'
+                    DISPLAY_NAME: 'Deploy to Routing cluster'
+                    ACR_SERVICE_CONNECTION: 'choreo-util-acr'
+      - job: sendAlerts
+        displayName: Send Alerts
+        dependsOn: deployment
+        condition: failed()
+        steps:
+          - template: notify-google-chat.yaml@TEMPLATE_REPOSITORY
+            parameters:
+              WEBHOOK_URL: 'https://chat.googleapis.com/v1/spaces/AAAACm3kzqw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ZK591oyEPjkaNPWT_To1tA1JfXcKTr1OGzJX2vhI0Ro%3D'
+              TITLE: 'Failed: Dev-Routing Deployment'
+              IMAGE_URL: 'https://img.icons8.com/fluency/48/000000/cancel.png'
+              TOP_LABEL: 'Build Number'
+              CONTENT: $(Build.BuildNumber)
+  - stage: WorkspaceClusterDeployment
+    dependsOn: UpdatingDatabase
+    displayName: 'Deploying to Workspace Cluster'
+    jobs:
+      - deployment: deployment
+        displayName: Deployment
+        environment: choreo-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: BASE_REPOSITORY
+                - template: deploy-to-cluster.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    KUSTOMIZE_BASE_DIR: 'workspace-ci'
+                    KUSTOMIZE_OVERLAY_DIR: 'dev-workspace'
+                    AZURE_RESOURCE_GROUP: 'choreo-dev-aks-rg'
+                    CLUSTER_NAME: 'choreo-dev-workspace-aks-cluster'
+                    APPLICATION_NAME: 'choreo-dev-replica'
+                    OVERLAY_WORKING_DIR: $(OVERLAY_WORKING_DIRECTORY)
+                    BASE_VERSION_FILE: 'basev2.version'
+                    DISPLAY_NAME: 'Deploy to Workspace cluster'
+                    ACR_SERVICE_CONNECTION: 'choreo-util-acr'
+      - job: sendAlerts
+        displayName: Send Alerts
+        dependsOn: deployment
+        condition: failed()
+        steps:
+          - template: notify-google-chat.yaml@TEMPLATE_REPOSITORY
+            parameters:
+              WEBHOOK_URL: 'https://chat.googleapis.com/v1/spaces/AAAACm3kzqw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ZK591oyEPjkaNPWT_To1tA1JfXcKTr1OGzJX2vhI0Ro%3D'
+              TITLE: 'Failed: Dev-Workspace Deployment'
+              IMAGE_URL: 'https://img.icons8.com/fluency/48/000000/cancel.png'
+              TOP_LABEL: 'Build Number'
+              CONTENT: $(Build.BuildNumber)
+
+  - stage: NotifyWebhookServer
+    dependsOn:
+      - ControlPlaneClusterDeployment
+      - DataPlaneE1ClusterDeployment
+      - DataPlaneE2ClusterDeployment
+      - RoutingClusterDeployment
+      - WorkspaceClusterDeployment
+      - PrivateDataPlaneDeployment
+    displayName: 'Notify Webhook Server'
+    jobs:
+      - job: TriggerWebhookServer
+        displayName: Trigger webhook server
+        steps:
+          - script: |
+              echo "Triggering the CI Webhook Server"
+
+  - stage: StoreClusterStatus
+    pool:
+      vmImage: 'ubuntu-latest'
+    dependsOn:
+      - ControlPlaneClusterDeployment
+      - DataPlaneE1ClusterDeployment
+      - DataPlaneE2ClusterDeployment
+      - RoutingClusterDeployment
+      - WorkspaceClusterDeployment
+      - PrivateDataPlaneDeployment
+    displayName: 'Storing Cluster State'
+    condition: eq(variables.clusterState, 'stopped')
+    jobs:
+      - job: updateStatus
+        steps:
+          - script: |
+              echo $SYSTEM_ACCESSTOKEN | az devops login
+              az pipelines variable-group variable update --group-id $(group_id) \
+                --name cluster_state \
+                --value "running" \
+                --org https://dev.azure.com/choreo-devops \
+                --project dev-control-plane-deployments
+            displayName: 'Store Cluster State'
+            env:
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - stage: AzureResourceDeployments
+    displayName: Deploying to Azure Resources
+    dependsOn: UpdatingDatabase
+    jobs:
+      - deployment: function_apps
+        displayName: Function Apps
+        environment: choreo-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: BASE_REPOSITORY
+                - script: |
+                    releaseTag=$(cat ../choreo-cp-env-overlay/kustomize/basev2.version)
+                    echo "Checking out $releaseTag"
+                    git checkout "$releaseTag"
+                  workingDirectory: choreo-control-plane
+                  displayName: Checkout release tag of base
+                - script: cat choreo-control-plane/azure-resources/base-ci/function-app-deployer.properties
+                  displayName: Display component versions
+                - template: install/install-yq.yml@TEMPLATE_REPOSITORY
+                - template: download-azure-resource-artifact.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    AZURE_SUBSCRIPTION: $(NON_AKS_AZURE_SUBSCRIPTION)
+                    ENVIRONMENT: $(ENVIRONMENT)
+                    RESOURCE_TYPE: function-app
+                - template: deploy-function-apps.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    AZURE_SUBSCRIPTION: $(NON_AKS_AZURE_SUBSCRIPTION)
+                    ENVIRONMENT: $(ENVIRONMENT)
+                    SUBSCRIPTION_ID: 520bc16b-6ff6-4d94-970e-1fa9c4708084
+
+      - deployment: stream_analytics_jobs
+        displayName: Stream Analytics Jobs
+        environment: choreo-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: BASE_REPOSITORY
+                - script: |
+                    releaseTag=$(cat ../choreo-cp-env-overlay/kustomize/basev2.version)
+                    echo "Checking out $releaseTag"
+                    git checkout "$releaseTag"
+                  workingDirectory: choreo-control-plane
+                  displayName: Checkout release tag of base
+                - script: cat choreo-control-plane/azure-resources/base-ci/stream-analytics-job-deployer.properties
+                  displayName: Display component versions
+                - template: install/install-yq.yml@TEMPLATE_REPOSITORY
+                - template: download-azure-resource-artifact.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    AZURE_SUBSCRIPTION: $(NON_AKS_AZURE_SUBSCRIPTION)
+                    ENVIRONMENT: $(ENVIRONMENT)
+                    RESOURCE_TYPE: stream-analytics-job
+                - template: deploy-arm-template.yaml@TEMPLATE_REPOSITORY
+                  parameters:
+                    AZURE_SUBSCRIPTION: $(NON_AKS_AZURE_SUBSCRIPTION)
+                    ENVIRONMENT: $(ENVIRONMENT)
+                    RESOURCE_TYPE: stream-analytics-job

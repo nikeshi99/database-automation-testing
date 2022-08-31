@@ -1,0 +1,138 @@
+parameters:
+- name: DATABASE_NAME
+  type: string
+- name: DB_URL
+  type: string
+- name: DB_USERNAME
+  type: string
+- name: DB_PASSWORD
+  type: string
+- name: CHANGELOGFILE
+  type: string
+- name: LIQUIBASE_DRIVER
+  type: string
+- name: LIQUIBASE_CLASSPATH
+  type: string
+- name: WOKRING_DIR
+  type: string
+  default: choreo-control-plane
+
+steps: 
+- bash: |
+    if [ -z "${{ parameters.DATABASE_NAME }}" ]; then
+      echo "##vso[task.logissue type=error;]Missing template parameter \"DATABASE_NAME\""
+      echo "##vso[task.complete result=Failed;]"
+    fi
+
+    if [ -z "${{ parameters.DB_URL }}" ]; then
+      echo "##vso[task.logissue type=error;]Missing template parameter \"DB_URL\""
+      echo "##vso[task.complete result=Failed;]"
+    fi
+
+    if [ -z "${{ parameters.DB_USERNAME }}" ]; then
+      echo "##vso[task.logissue type=error;]Missing template parameter \"DB_USERNAME\""
+      echo "##vso[task.complete result=Failed;]"
+    fi 
+
+    if [ -z "${{ parameters.DB_PASSWORD }}" ]; then
+      echo "##vso[task.logissue type=error;]Missing template parameter \"DB_PASSWORD\""
+      echo "##vso[task.complete result=Failed;]"
+    fi 
+
+    if [ -z "${{ parameters.CHANGELOGFILE }}" ]; then
+      echo "##vso[task.logissue type=error;]Missing template parameter \"CHANGELOGFILE\""
+      echo "##vso[task.complete result=Failed;]"
+    fi 
+
+    if [ -z "${{ parameters.LIQUIBASE_DRIVER }}" ]; then
+      echo "##vso[task.logissue type=error;]Missing template parameter \"LIQUIBASE_DRIVER\""
+      echo "##vso[task.complete result=Failed;]"
+    fi 
+
+    if [ -z "${{ parameters.LIQUIBASE_CLASSPATH }}" ]; then
+      echo "##vso[task.logissue type=error;]Missing template parameter \"LIQUIBASE_CLASSPATH\""
+      echo "##vso[task.complete result=Failed;]"
+    fi 
+  displayName: Check for required parameters
+
+- script: |
+    push_git_changes () {
+      git config --global user.email "choreo-cicd@wso2.com"
+      git config --global user.name "Choreo CI Agent"
+      git diff
+      git commit -am "Update ${{ parameters.DATABASE_NAME }}"
+      git remote -v
+      git branch -al
+      if git push origin HEAD:$(Build.SourceBranchName) ; then
+        echo "Changes pushed successfully"
+      else
+        git fetch origin
+        git merge --no-edit --strategy recursive --strategy-option theirs origin/$(Build.SourceBranchName)
+        git push origin HEAD:$(Build.SourceBranchName)
+      fi
+    }
+
+    verify_database_changes () {
+      verify=true
+      echo "verify database ${{ parameters.DATABASE_NAME }} changes"
+      liquibase --url='${{ parameters.DB_URL }}' --username=${{ parameters.DB_USERNAME }} --password=${{ parameters.DB_PASSWORD }} --changeLogFile=${{ parameters.CHANGELOGFILE }} --driver=${{ parameters.LIQUIBASE_DRIVER }} --classpath=${{ parameters.LIQUIBASE_CLASSPATH }} --logLevel=info validate || verify=false
+      liquibase --url='${{ parameters.DB_URL }}' --username=${{ parameters.DB_USERNAME }} --password=${{ parameters.DB_PASSWORD }} --changeLogFile=${{ parameters.CHANGELOGFILE }} --driver=${{ parameters.LIQUIBASE_DRIVER }} --classpath=${{ parameters.LIQUIBASE_CLASSPATH }} --logLevel=info tag version_$(Build.SourceVersion) || verify=false
+      liquibase --url='${{ parameters.DB_URL }}' --username=${{ parameters.DB_USERNAME }} --password=${{ parameters.DB_PASSWORD }} --changeLogFile=${{ parameters.CHANGELOGFILE }} --driver=${{ parameters.LIQUIBASE_DRIVER }} --classpath=${{ parameters.LIQUIBASE_CLASSPATH }} --logLevel=info status --verbose || verify=false
+      liquibase --url='${{ parameters.DB_URL }}' --username=${{ parameters.DB_USERNAME }} --password=${{ parameters.DB_PASSWORD }} --changeLogFile=${{ parameters.CHANGELOGFILE }} --driver=${{ parameters.LIQUIBASE_DRIVER }} --classpath=${{ parameters.LIQUIBASE_CLASSPATH }} --logLevel=info updateSQl || verify=false
+    }
+
+    update_database_changes () {
+      success=true
+      echo "update database ${{ parameters.DATABASE_NAME }} changes"
+      liquibase --url='${{ parameters.DB_URL }}' --username=${{ parameters.DB_USERNAME }} --password=${{ parameters.DB_PASSWORD }} --changeLogFile=${{ parameters.CHANGELOGFILE }} --driver=${{ parameters.LIQUIBASE_DRIVER }} --classpath=${{ parameters.LIQUIBASE_CLASSPATH }} --logLevel=info update || success=false
+    }
+
+    if [ -s $(System.DefaultWorkingDirectory)/choreo-cp-env-overlay/database-version/${{ parameters.DATABASE_NAME }}.version ]; then
+      current_commithash=$(cat $(System.DefaultWorkingDirectory)/choreo-cp-env-overlay/kustomize/basev2.version)
+      previous_commithash=$(cat $(System.DefaultWorkingDirectory)/choreo-cp-env-overlay/database-version/${{ parameters.DATABASE_NAME }}.version)
+      path_filter="liquibase/db/${{ parameters.DATABASE_NAME }}/changelog"
+      change_changelogfiles=$(git diff $previous_commithash...$current_commithash --name-only)
+      
+      match_count=0      
+      
+      for FILE in $change_changelogfiles
+      do
+        if [[ $FILE == *$path_filter* ]]; then
+          echo "MATCH:  ${FILE} changed"
+          match_count=$(($match_count+1))
+        else
+          echo "IGNORE: ${FILE} changed"
+        fi
+      done
+      
+      if [[ $match_count -gt 0 ]]; then
+        echo "${{ parameters.DATABASE_NAME }} is changed"
+        verify_database_changes
+        if [[ "$verify" == "true" ]]; then
+          update_database_changes
+        else
+          echo "${{ parameters.DATABASE_NAME }} verification failed"
+          echo "##vso[task.complete result=Failed;]"
+        fi
+      else
+        success=true
+        echo "${{ parameters.DATABASE_NAME }} is not changed"
+      fi
+      
+    else
+      echo "Empty commithash in ${{ parameters.DATABASE_NAME }}.version"
+      echo "##vso[task.complete result=Failed;]"
+    fi
+
+    if [[ "$success" == "true" ]]; then
+      echo "Update Commithash in file"
+      echo "$current_commithash" > $(System.DefaultWorkingDirectory)/choreo-cp-env-overlay/database-version/${{ parameters.DATABASE_NAME }}.version
+      push_git_changes
+    else
+      echo "update fail"
+      echo "##vso[task.complete result=Failed;]"
+    fi
+  condition: always()
+  workingDirectory: ${{ parameters.WOKRING_DIR }}
+  name: Update_${{ parameters.DATABASE_NAME }}
+  displayName: 'Update ${{ parameters.DATABASE_NAME }}'
